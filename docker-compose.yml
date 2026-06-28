@@ -1,0 +1,82 @@
+name: vkr-power-grid
+
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: vkr-postgres-db
+    restart: always
+    environment:
+      POSTGRES_DB: vkr_db
+      POSTGRES_USER: vkr_user
+      POSTGRES_PASSWORD: vkr_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vkr_user -d vkr_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:alpine
+    container_name: vkr-redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    container_name: vkr-fastapi-backend
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://vkr_user:vkr_password@db:5432/vkr_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=super_secret_key_1234567890_vkr
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  celery_worker:
+    build: ./backend
+    container_name: vkr-celery-worker
+    command: celery -A tasks.celery_app worker --loglevel=info
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://vkr_user:vkr_password@db:5432/vkr_db
+      - REDIS_URL=redis://redis:6379/0
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+    depends_on:
+      - db
+      - redis
+
+  celery_beat:
+    build: ./backend
+    container_name: vkr-celery-beat
+    command: celery -A tasks.celery_app beat --loglevel=info
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://vkr_user:vkr_password@db:5432/vkr_db
+      - REDIS_URL=redis://redis:6379/0
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+    depends_on:
+      - db
+      - redis
+
+  frontend:
+    build: ./frontend
+    container_name: vkr-react-frontend
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
